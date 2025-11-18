@@ -66,6 +66,9 @@ _build
 
 # Tests
 tests/
+LIFT/
 
 # Docker history
 .isaac-lab-docker-history
+
+
