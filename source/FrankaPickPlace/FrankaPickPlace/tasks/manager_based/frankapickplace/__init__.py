@@ -13,11 +13,21 @@ from . import agents
 
 
 gym.register(
-    id="Template-Frankapickplace-v0",
+    id="Template-Franka-Lift",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.frankapickplace_env_cfg:FrankapickplaceEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
+        "env_cfg_entry_point": f"{__name__}.frankapickplace_env_cfg:FrankPickPlaceEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FrankaReachPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Franka-Lift-Play",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.frankapickplace_env_cfg:FrankPickPlaceCfgEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FrankaReachPPORunnerCfg",
     },
 )
