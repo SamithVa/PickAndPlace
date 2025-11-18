@@ -143,12 +143,12 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel)
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel)
-        object_position = ObsTerm(func=mdp.object_position_in_robot_root_frame)
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel) # 9 
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel) # 9
+        object_position = ObsTerm(func=mdp.object_position_in_robot_root_frame) # 3 + 4 = 7 (xyz, quat)
         ### Added for pick and place task
-        target_drop_position = ObsTerm(func=mdp.generated_commands, params={"command_name": "drop_pose"}) 
-        actions = ObsTerm(func=mdp.last_action)
+        target_drop_position = ObsTerm(func=mdp.generated_commands, params={"command_name": "drop_pose"}) # 3 
+        actions = ObsTerm(func=mdp.last_action) # 9 + 2 (end-effector) = 8
 
         def __post_init__(self):
             self.enable_corruption = True
