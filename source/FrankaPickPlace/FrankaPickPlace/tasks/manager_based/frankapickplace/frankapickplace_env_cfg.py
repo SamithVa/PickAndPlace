@@ -86,6 +86,24 @@ class FrankaSceneCfg(InteractiveSceneCfg):
         ],
     )
 
+    # Virtual frame for object visualization
+    object_frame = FrameTransformerCfg(
+        prim_path="{ENV_REGEX_NS}/Cube",
+        debug_vis=True,
+        visualizer_cfg=FRAME_MARKER_CFG.copy().replace(
+            markers={"frame": FRAME_MARKER_CFG.markers["frame"].replace(scale=(0.05, 0.05, 0.05))},
+            prim_path="/Visuals/ObjectFrame"
+        ),
+        target_frames=[
+            FrameTransformerCfg.FrameCfg(
+                prim_path="{ENV_REGEX_NS}/Cube",
+                name="object_center",
+                offset=OffsetCfg(
+                    pos=[0.0, 0.0, 0.0],
+                ),
+            ),
+        ],
+    )
 
     # lights
     light = AssetBaseCfg(
@@ -107,12 +125,12 @@ class CommandsCfg:
     drop_pose = mdp.UniformPoseCommandCfg(
         asset_name="robot",
         body_name="panda_hand",  # will be set by agent env cfg
-        resampling_time_range=(5.0, 5.0),  # Match episode_length_s
+        resampling_time_range=(8.0, 8.0),  # Match episode_length_s
         debug_vis=True,
         ranges=mdp.UniformPoseCommandCfg.Ranges(
-            pos_x=(0.3, 0.6),      
-            pos_y=(-0.4, 0.4),
-            pos_z=(0.2, 0.2),  
+            pos_x=(-0.2, 0.4),      
+            pos_y=(-0.5, -0.2),
+            pos_z=(0.03, 0.03),  
             roll=(0.0, 0.0), 
             pitch=(0.0, 0.0), 
             yaw=(0.0, 0.0)
@@ -168,11 +186,13 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (0.1, 0.25), "y": (-0.1, 0.1), "z": (0.0, 0.0)},
+            "pose_range": {"x": (-0.2, 0.4), "y": (0.2, 0.4), "z": (0.0, 0.0)},
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("object", body_names="Cube"),
         },
     )
+    # pos_x=(0.3, 0.4),      
+    # pos_y=(-0.3, 0.3),
 
 
 @configclass
@@ -180,39 +200,76 @@ class RewardsCfg:
     """Reward terms for the MDP."""
 
     # PHASE 1: PICKING
-    reaching_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.1}, weight=1.0)
-    lifting_object = RewTerm(func=mdp.object_is_lifted, params={"minimal_height": 0.04}, weight=15.0)
+    # reaching_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.1}, weight=1.0)
+    # lifting_object = RewTerm(func=mdp.object_is_lifted, params={"minimal_height": 0.04}, weight=15.0)
 
     # PHASE 2: MOVING TO TARGET
-    object_goal_tracking = RewTerm(
-        func=mdp.object_goal_distance,
-        params={"std": 0.3, "minimal_height": 0.2, "command_name": "drop_pose"},
-        weight=16.0,
-    )
+    # object_goal_tracking = RewTerm(
+    #     func=mdp.object_goal_distance,
+    #     params={"std": 0.3, "minimal_height": 0.2, "command_name": "drop_pose"},
+    #     weight=16.0,
+    # )
 
-    # When close to the goal, provide a finer-grained reward to encourage precise placement
-    object_goal_tracking_fine_grained = RewTerm(
-        func=mdp.object_goal_distance,
-        params={"std": 0.05, "minimal_height": 0.2, "command_name": "drop_pose"},
-        weight=5.0,
+    # # When close to the goal, provide a finer-grained reward to encourage precise placement
+    # object_goal_tracking_fine_grained = RewTerm(
+    #     func=mdp.object_goal_distance,
+    #     params={"std": 0.05, "minimal_height": 0.2, "command_name": "drop_pose"},
+    #     weight=5.0,
+    # )
+
+    # dragging_penalty = RewTerm(
+    #     func=mdp.object_drag_penalty,
+    #     weight=-0.5, 
+    #     params={
+    #         "minimal_height": 0.03, # If below 3cm...
+    #         "limit_vel": 0.1        # ...and moving faster than 10cm/s...
+    #     },                          # ...PENALIZE.
+    # )
+
+    distance_penalty = RewTerm(
+        func=mdp.object_ee_distance_penalty,
+        weight=-1.0,
     )
     
-    # PHASE 3: PLACING
-    # gentle_placing = RewTerm(
-    #     func=mdp.placing_object_gentle,
-    #     params={"command_name": "drop_pose", "target_height": 0.05},
-    #     weight=30.0,
-    # )
+    grasp_orientation = RewTerm(
+        func=mdp.object_orientation_grasp_reward,
+        weight=1, 
+        params={
+            "std": 0.2, 
+            "ee_frame_cfg": SceneEntityCfg("ee_frame")
+        },
+    )
 
-    # COMBINED PICK AND PLACE REWARD
-    # picking_and_placing = RewTerm(
-    #     func=mdp.staged_pick_and_place_reward,
-    #     params={
-    #         "std": 0.25,
-    #         "command_name": "drop_pose"
-    #     },
-    #     weight=1e-1,
-    # )
+    lifting_object = RewTerm(
+        func=mdp.object_is_lifted,
+        params={"minimal_height": 0.2},
+        weight=3.0,
+    )
+
+    
+    # PHASE 2: MOVING TO TARGET
+    transport_object = RewTerm(
+        func=mdp.object_transport_reward,
+        params={"std": 0.1, "command_name": "drop_pose", "minimal_height": 0.2},
+        weight=4.0,
+    )
+
+    placement_bonus = RewTerm(
+        func=mdp.object_placement_bonus,
+        params={"threshold": 0.05, "command_name": "drop_pose"},
+        weight=5.0,
+    )
+
+    retreat_after_place = RewTerm(
+        func=mdp.object_placed_retreat_reward,
+        weight=4.0,  # High weight to force the release
+        params={
+            "target_threshold": 0.05,  # Object must be within 5cm of target
+            "retreat_dist_threshold": 0.2, # Scale for how far away hand should go
+            "command_name": "drop_pose",
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+        },
+    )
 
     # --- PENALTIES --- #
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-5e-5)
@@ -221,7 +278,6 @@ class RewardsCfg:
         weight=-5e-5,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
-
 
 
 @configclass
@@ -270,11 +326,10 @@ class FrankPickPlaceEnvCfg(ManagerBasedRLEnvCfg):
         # general settings
         self.decimation = 2
         self.sim.render_interval = self.decimation
-        self.episode_length_s = 5.0  # Increased from 5.0 to allow time for pick and place
+        self.episode_length_s = 8.0  # Increased from 5.0 to allow time for pick and place
         # simulation settings
         self.sim.dt = 0.01
         self.sim.physx.bounce_threshold_velocity = 0.2
-        self.sim.physx.bounce_threshold_velocity = 0.01
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
