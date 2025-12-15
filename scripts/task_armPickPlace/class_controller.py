@@ -10,7 +10,7 @@ from isaacsim.robot.manipulators.examples.franka.controllers.pick_place_controll
 from isaacsim.robot.manipulators.controllers import pick_place_controller
 from isaacsim.robot.manipulators.controllers import stacking_controller
 #from omni.isaac.franka.controllers import FrankaPickPlaceController
-import torch 
+
 
 class ArmPickController(BaseController):
     def __init__(
@@ -20,7 +20,6 @@ class ArmPickController(BaseController):
         articulation: Articulation,
         picking_order_cube_names: typing.List[str],
         robot_observation_name: str,
-        policy_path: str = None,
     ) -> None:
         # Use the Franka StackingController as base
         super().__init__(name=name )
@@ -37,7 +36,6 @@ class ArmPickController(BaseController):
         self._last_completed_cube_numth = -1  # 跟踪上一个完成的方块
         self._current_cube_start_time = 0  # 当前方块开始处理的时间
         self._max_cube_time = 1000  # 每个方块的最大处理时间（步数）
-        self._policy = torch.jit.load(policy_path) if policy_path is not None else None
 
     def forward(
         self,
@@ -61,46 +59,14 @@ class ArmPickController(BaseController):
 
         # 调用PickPlaceController的forward方法       
         cube_current_position = observations[current_cube_name]['position']       # 通过事件状态或空间距离判断夹爪动作
-        cube_current_orientation = observations[current_cube_name]['orientation']
         robot_current_joint_position = observations[self._robot_observation_name]['joint_positions']
-
-
-
-        # use RL model here to decide actions
-        # actions = self._pick_place_controller.forward(
-        #     picking_position=cube_current_position, 
-        #     placing_position=placing_target_postion,
-        #     current_joint_positions=robot_current_joint_position,
-        #     end_effector_orientation=end_effector_orientation,
-        #     end_effector_offset=end_effector_offset,
-        # )
-        # robot_joint_vel
-        joint_vel = observations[self._robot_observation_name]['joint_velocities']
-        previous_action = observations[self._robot_observation_name]['action']
-        
-        # print("robot_current_joint_position", robot_current_joint_position.shape)
-        # print("joint_vel", joint_vel.shape)
-        # print("placing_target_postion", placing_target_postion.shape)
-        # print("cube_current_position", cube_current_position.shape)
-        # print("cube_orientation", observations[current_cube_name]['orientation'].shape)
-        # print("previous_action", previous_action.shape)
-        
-        obs = torch.tensor(
-            np.concatenate(( # total 36
-                robot_current_joint_position,  # 9
-                joint_vel,  # 9
-                placing_target_postion, # 3 
-                cube_current_position, # 3
-                cube_current_orientation,  # 4
-                previous_action,  # 8
-                )
-            ), dtype=torch.float32
-        ).unsqueeze(0)
-        
-        actions = self._policy(obs).squeeze(0).detach().numpy() if self._policy is not None else None
-        # actions to dict
-        actions = ArticulationAction(joint_velocities=actions)
-        print(actions)
+        actions = self._pick_place_controller.forward(
+            picking_position=cube_current_position, 
+            placing_position=placing_target_postion,
+            current_joint_positions=robot_current_joint_position,
+            end_effector_orientation=end_effector_orientation,
+            end_effector_offset=end_effector_offset,
+        )
 
         if self._pick_place_controller.is_done():
             print(f"PickPlaceController reports done for cube {self._current_cube_numth} (color index {color_idx})")

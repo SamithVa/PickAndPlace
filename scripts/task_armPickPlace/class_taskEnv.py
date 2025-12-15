@@ -44,7 +44,7 @@ class taskEnv_SceneSetup(BaseTask):
         self._target_positions = np.array([[0.2, -0.2, 0.0],     # Red  分类目标位置 (3个目标位置对应3种颜色)
                                            [0.4, -0.2, 0.0],     # Green
                                            [0.6, -0.2, 0.0]])    # Blue 
-        self._target_orientation = np.array([1.0, 0.0, 0.0, 0.0])
+        self._target_orientation = np.array([1.0,0.0, 0.0, 0.0])
         self._target_colors = np.array([[1, 0, 0],   # Red
                                         [0, 1, 0],   # Green
                                         [0, 0, 1]])  # Blue
@@ -126,14 +126,8 @@ class taskEnv_SceneSetup(BaseTask):
             end_effector_position_02 = self._robot.end_effector.get_world_pose()
             #print("end_effector_position_01", end_effector_position_01)
             #print("end_effector_position_02", end_effector_position_02)
-
-            # NOTE
-            joint_velocities = joints_state.velocities
-      
             observations[self._robot.name] = {
-                "joint_positions": joint_currentpos_02, # 9 DOF
-                "joint_velocities": joint_velocities, # 9 DOF
-                "action": self.last_action if hasattr(self, 'last_action') else np.zeros(joint_currentpos_02.shape[0] - 1), # joint_currentpos_02.shape[0] - 1 (gripper is only considered as open/close) 
+                "joint_positions": joint_currentpos_02,
                 "end_effector_position": end_effector_position_02,
             }
         
@@ -143,8 +137,8 @@ class taskEnv_SceneSetup(BaseTask):
             cube_position_world, cube_orientation_world = self._cubes[i].get_world_pose()
 
             observations[self._cubes[i].name] = {
-                "position": cube_position_world, # 3
-                "orientation": cube_orientation_world, # 4
+                "position": cube_position_world,
+                "orientation": cube_orientation_world,
                 "size": self._cube_scale,
                 "color": self._cube_colors[i] if i < len(self._cube_colors) else 0
             }

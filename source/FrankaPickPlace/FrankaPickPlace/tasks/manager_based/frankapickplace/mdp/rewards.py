@@ -16,6 +16,17 @@ from isaaclab.utils.math import combine_frame_transforms
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+
+# -----------------------------------------------------------------------
+
+def object_is_lifted(
+    env: ManagerBasedRLEnv, minimal_height: float, object_cfg: SceneEntityCfg = SceneEntityCfg("object")
+) -> torch.Tensor:
+    """Reward the agent for lifting the object above the minimal height."""
+    object: RigidObject = env.scene[object_cfg.name]
+    return torch.where(object.data.root_pos_w[:, 2] > minimal_height, 1.0, 0.0)
+
+
 def object_ee_distance(
     env: ManagerBasedRLEnv,
     std: float,
@@ -31,6 +42,7 @@ def object_ee_distance(
                         If False, use the object_cfg (backward compatible).
     """
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+<<<<<<< HEAD
     ee_w = ee_frame.data.target_pos_w[..., 0, :]  # (num_envs, 3)
     
     if use_target_cube:
@@ -54,9 +66,17 @@ def object_ee_distance(
         cube_pos_w = object.data.root_pos_w[:, :3]
     
     # Distance of the end-effector to the object
+=======
+    # Target object position: (num_envs, 3)
+    cube_pos_w = object.data.root_pos_w
+    # End-effector position: (num_envs, 3)
+    ee_w = ee_frame.data.target_pos_w[..., 0, :]
+    # Distance of the end-effector to the object: (num_envs,)
+>>>>>>> 4ced5ec5c64190a74d6b135520d0e7bd6e256168
     object_ee_distance = torch.norm(cube_pos_w - ee_w, dim=1)
     return 1 - torch.tanh(object_ee_distance / std)
 
+<<<<<<< HEAD
 def object_is_lifted(
     env: ManagerBasedRLEnv, 
     minimal_height: float, 
@@ -91,17 +111,20 @@ def object_is_lifted(
         cube_height = object.data.root_pos_w[:, 2]
     
     return torch.where(cube_height > minimal_height, 1.0, 0.0)
+=======
+>>>>>>> 4ced5ec5c64190a74d6b135520d0e7bd6e256168
 
 def object_goal_distance(
     env: ManagerBasedRLEnv,
     std: float,
+    minimal_height: float,
     command_name: str,
-    minimal_height: float = None,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     use_target_cube: bool = False,
     num_cubes: int = 4,
 ) -> torch.Tensor:
+<<<<<<< HEAD
     """Reward the agent for tracking the goal pose using tanh-kernel.
     
     Args:
@@ -110,8 +133,13 @@ def object_goal_distance(
         use_target_cube: If True, use the target cube from env.target_cube_idx.
                         If False, use the object_cfg (backward compatible).
     """
+=======
+    """Reward the agent for tracking the goal pose using tanh-kernel."""
+    # extract the used quantities (to enable type-hinting)
+>>>>>>> 4ced5ec5c64190a74d6b135520d0e7bd6e256168
     robot: RigidObject = env.scene[robot_cfg.name]
     command = env.command_manager.get_command(command_name)
+<<<<<<< HEAD
     
     # Compute target position in world frame
     target_pos_b = command[:, :3]
@@ -145,108 +173,152 @@ def object_goal_distance(
         reward = (object_pos_w[:, 2] > minimal_height) * reward
     
     return reward
+=======
+    # compute the desired position in the world frame
+    des_pos_b = command[:, :3]
+    des_pos_w, _ = combine_frame_transforms(robot.data.root_pos_w, robot.data.root_quat_w, des_pos_b)
+    # distance of the end-effector to the object: (num_envs,)
+    distance = torch.norm(des_pos_w - object.data.root_pos_w, dim=1)
+    # rewarded if the object is lifted above the threshold
+    return (object.data.root_pos_w[:, 2] > minimal_height) * (1 - torch.tanh(distance / std))
+>>>>>>> 4ced5ec5c64190a74d6b135520d0e7bd6e256168
 
-def placing_object_gentle(
+
+def drop_object_reward(
     env: ManagerBasedRLEnv,
-    std: float,
+    distance_threshold: float,
     command_name: str,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-) -> torch.Tensor:
-    """Reward the agent for placing the object gently at the target position."""
-
-    object: RigidObject = env.scene[object_cfg.name]
+) -> torch.Tensor:  
+    """Reward the agent for dropping the object at the target location."""
+    # extract the used quantities (to enable type-hinting)
     robot: RigidObject = env.scene[robot_cfg.name]
+    object: RigidObject = env.scene[object_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    # compute the desired position in the world frame
+    des_pos_b = command[:, :3]
+    des_pos_w, _ = combine_frame_transforms(robot.data.root_pos_w, robot.data.root_quat_w, des_pos_b)
+    # distance of the end-effector to the object: (num_envs,)
+    distance = torch.norm(des_pos_w - object.data.root_pos_w, dim=1)
+    # check if within threshold
+    within_threshold = (distance < distance_threshold).float()
+    # gripper opening reward
+    gripper_joints = robot.data.joint_pos[:, -2:]
+    gripper_opened = torch.where(torch.mean(gripper_joints, dim=1) >= 0.04, 1.0, 0.0)
+    return gripper_opened * within_threshold
+
+
+def grasp_reward(
+    env: ManagerBasedRLEnv,
+    distance_threshold: float = 0.04,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward closing the gripper when near the object."""
+    object: RigidObject = env.scene[object_cfg.name]
+    ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+    robot: RigidObject = env.scene[robot_cfg.name]
+    
+    # Get distance from EE to object
+    object_pos_w = object.data.root_pos_w
+    ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]
+    distance = torch.norm(object_pos_w - ee_pos_w, dim=1)
+    
+    # Only reward gripper closing when close to object
+    near_object = (distance < distance_threshold).float()
+    
+    # Gripper closure: 0.04 is fully open, 0.0 is fully closed
+    gripper_joints = robot.data.joint_pos[:, -2:]
+    gripper_closure = 1.0 - torch.clamp(torch.mean(gripper_joints, dim=1) / 0.04, 0.0, 1.0)
+    
+    return near_object * gripper_closure
+
+
+def placement_height_reward(
+    env: ManagerBasedRLEnv,
+    xy_threshold: float = 0.08,
+    target_height_offset: float = 0.05,
+    command_name: str = "drop_pose",
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """Reward lowering the object when it's near the target XY position."""
+    robot: RigidObject = env.scene[robot_cfg.name]
+    object: RigidObject = env.scene[object_cfg.name]
     command = env.command_manager.get_command(command_name)
     
+    # Get target position in world frame
     target_pos_b = command[:, :3]
     target_pos_w, _ = combine_frame_transforms(
-        robot.data.root_pos_w, 
-        robot.data.root_quat_w, 
-        target_pos_b
+        robot.data.root_pos_w, robot.data.root_quat_w, target_pos_b
     )
     
-    # Distance to target
-    pos_error = torch.norm(target_pos_w - object.data.root_pos_w, dim=1)
+    object_pos_w = object.data.root_pos_w
     
-    # Object velocity
-    vel_norm = torch.norm(object.data.root_lin_vel_w, dim=1)
-
-    # Position Reward (get to the spot)
-    rew_pos = 1 - torch.tanh(pos_error / std)
+    # Check if object is near target in XY plane
+    xy_distance = torch.norm(object_pos_w[:, :2] - target_pos_w[:, :2], dim=1)
+    near_target_xy = (xy_distance < xy_threshold).float()
     
-    # Velocity Reward (be slow)
-    # We want velocity to be 0, but we prioritize this only when close to target
-    # If pos_error is large, rew_pos is small, so the velocity penalty matters less
-    rew_vel = 1 - torch.tanh(vel_norm / 0.5) # 0.5 is velocity sensitivity
-
-    # If we are far away, we care mostly about position.
-    # If we are close, we care about position AND being slow.
-    return rew_pos * rew_vel
-
-# def object_drop_goal_distance(
-#     env: ManagerBasedRLEnv,
-#     std: float,
-#     command_name: str,
-#     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-#     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-# ) -> torch.Tensor:
-#     """
-#     Reward the agent for tracking the goal pose (drop pose) in 3D space.
-#     Unlike object_goal_distance, this DOES NOT require the object to be lifted.
-#     """
-#     # extract the used quantities (to enable type-hinting)
-#     robot: RigidObject = env.scene[robot_cfg.name]
-#     object: RigidObject = env.scene[object_cfg.name]
-#     command = env.command_manager.get_command(command_name)
+    # Reward being at the right height (target height + small offset)
+    target_height = target_pos_w[:, 2] + target_height_offset
+    height_error = torch.abs(object_pos_w[:, 2] - target_height)
+    height_reward = torch.exp(-height_error / 0.05)  # Sharp peak at correct height
     
-#     # compute the target position in the world frame
-#     # command is (num_envs, 7) [pos, quat] or (num_envs, 3) [pos]
-#     target_pos_b = command[:, :3] 
-    
-#     # transform command from target_pos from base frame to world frame
-#     target_pos_w, _ = combine_frame_transforms(robot.data.root_pos_w, robot.data.root_quat_w, target_pos_b)
-
-#     # distance of the object to the goal: (num_envs,)
-#     distance = torch.norm(target_pos_w - object.data.root_pos_w, dim=1)
-    
-#     # Standard tanh kernel reward
-#     return 1 - torch.tanh(distance / std)
-
-# def object_reached_goal(
-#     env: ManagerBasedRLEnv,
-#     command_name: str,
-#     threshold: float,
-#     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-#     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-# ) -> torch.Tensor:
-#     """Reward the agent for successfully reaching the goal position with the object within a threshold."""
-#     # extract the used quantities (to enable type-hinting)
-#     robot: RigidObject = env.scene[robot_cfg.name]
-#     object: RigidObject = env.scene[object_cfg.name]
-#     command = env.command_manager.get_command(command_name)
-#     # compute the desired position in the world frame
-#     des_pos_b = command[:, :3]
-#     des_pos_w, _ = combine_frame_transforms(robot.data.root_pos_w, robot.data.root_quat_w, des_pos_b)
-#     # distance of the object to the goal: (num_envs,)
-#     distance = torch.norm(des_pos_w - object.data.root_pos_w, dim=1)
-#     # return 1.0 if the object is within threshold of the goal, 0.0 otherwise
-#     return torch.where(distance < threshold, torch.ones_like(distance), torch.zeros_like(distance))
+    return near_target_xy * height_reward
 
 
-# --- STAGED REWARDS FOR PICK-AND-PLACE TASK --- #
-def staged_pick_and_place_reward(
+def release_reward(
     env: ManagerBasedRLEnv,
-    std: float = 0.25,
+    xy_threshold: float = 0.05,
+    height_threshold: float = 0.08,
     command_name: str = "drop_pose",
-    lift_height: float = 0.2,
-    target_xy_threshold: float = 0.05,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """Reward opening the gripper when object is correctly positioned above target."""
+    robot: RigidObject = env.scene[robot_cfg.name]
+    object: RigidObject = env.scene[object_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    
+    # Get target position in world frame
+    target_pos_b = command[:, :3]
+    target_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, target_pos_b
+    )
+    
+    object_pos_w = object.data.root_pos_w
+    
+    # Check if object is well-positioned
+    xy_distance = torch.norm(object_pos_w[:, :2] - target_pos_w[:, :2], dim=1)
+    height_distance = torch.abs(object_pos_w[:, 2] - target_pos_w[:, 2])
+    
+    well_positioned = ((xy_distance < xy_threshold) & (height_distance < height_threshold)).float()
+    
+    # Gripper opening: 0.0 is closed, 0.04 is open
+    gripper_joints = robot.data.joint_pos[:, -2:]
+    gripper_opening = torch.clamp(torch.mean(gripper_joints, dim=1) / 0.04, 0.0, 1.0)
+    
+    return well_positioned * gripper_opening
+
+# -----------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------
+# Separated Staged Rewards
+# -----------------------------------------------------------------------
+
+
+def reward_stage_reach(
+    env: ManagerBasedRLEnv,
+    std: float = 0.1,
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
     use_target_cube: bool = False,
     num_cubes: int = 4,
 ) -> torch.Tensor:
+<<<<<<< HEAD
     """
     A staged reward that guides the agent through Reach -> Lift -> Move -> Place.
     The later stages are only rewarded if the previous stages are satisfied.
@@ -257,9 +329,13 @@ def staged_pick_and_place_reward(
     """
     # 1. Get Assets
     robot: RigidObject = env.scene[robot_cfg.name]
+=======
+    """Stage 1: Reward for reaching the object."""
+    object: RigidObject = env.scene[object_cfg.name]
+>>>>>>> 4ced5ec5c64190a74d6b135520d0e7bd6e256168
     ee_frame = env.scene[ee_frame_cfg.name]
-    command = env.command_manager.get_command(command_name)
 
+<<<<<<< HEAD
     # 2. Calculate Transforms
     # Target in World Frame
     target_pos_b = command[:, :3]
@@ -295,72 +371,105 @@ def staged_pick_and_place_reward(
     
     # Distance: Object to Target (Z axis / Height)
     d_obj_target_z = torch.abs(object_pos_w[:, 2] - target_pos_w[:, 2])
+=======
+    object_pos_w = object.data.root_pos_w
+    ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]
 
-    # 4. Define Criteria (The "Levels")
-    # Is the object lifted high enough to transition to transport mode?
-    is_lifted = object_pos_w[:, 2] > lift_height
+    # as the robot approaches the object, it should lower its speed
+    object_speed = torch.norm(object.data.root_vel_w, dim=1)
+>>>>>>> 4ced5ec5c64190a74d6b135520d0e7bd6e256168
+
+    distance = torch.norm(object_pos_w - ee_pos_w, dim=1)
+    return (1 - torch.tanh(distance / std)) * torch.exp(-object_speed)
+
+# def reward_stage_reach_linear(
+#     env: ManagerBasedRLEnv,
+#     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+#     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+# ) -> torch.Tensor:
+#     # 1. Get EE and Object positions
+#     robot: RigidObject = env.scene[robot_cfg.name]
+#     # NOTE: Ensure index -1 is your hand/gripper. If unsure, check your asset.
+#     ee_pos_w = robot.data.body_pos_w[:, -1, :] 
+#     object: RigidObject = env.scene[object_cfg.name]
+#     object_pos_w = object.data.root_pos_w
+
+#     # 2. Calculate Euclidean Distance
+#     distance = torch.norm(object_pos_w - ee_pos_w, dim=1)
     
-    # Is the object physically close to the target XY coordinates?
-    is_above_target = d_obj_target_xy < target_xy_threshold
+#     # 3. The Fix: Negative Distance Reward
+#     # This has a constant gradient. 1cm closer is ALWAYS +0.01 reward points.
+#     # No saturation.
+#     return -distance
 
-    # -----------------------------------------------------------------------
-    # 5. Calculate Staged Rewards
-    # -----------------------------------------------------------------------
-    
-    # STAGE 1: Reaching (Always active, but small weight relative to others)
-    # Use a tighter std for reaching to encourage precision grasp
-    rew_reach = 1 - torch.tanh(d_ee_obj / std)
+def reward_stage_lift(
+    env: ManagerBasedRLEnv,
+    min_height: float = 0.04,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """Stage 2: Reward ONLY for lifting height."""
+    object: RigidObject = env.scene[object_cfg.name]
 
-    # STAGE 2: Lifting
-    # Progressive reward for lifting: reward increases as object approaches lift_height
-    # Once lifted, give maximum reward to maintain lifted state
-    height_error = torch.abs(lift_height - object_pos_w[:, 2])
-    rew_lift = torch.where(
+    return torch.where(
+        object.data.root_pos_w[:, 2] > min_height,
+        1.0,
+        0.0,
+    )
+
+
+def reward_stage_transport(
+    env: ManagerBasedRLEnv,
+    std: float = 0.2,
+    min_height: float = 0.04,
+    command_name: str = "drop_pose",
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """Stage 3: Reward for XY alignment ONLY when lifted."""
+    robot: RigidObject = env.scene[robot_cfg.name]
+    object: RigidObject = env.scene[object_cfg.name]
+    command = env.command_manager.get_command(command_name)
+
+    is_lifted = object.data.root_pos_w[:, 2] > min_height
+
+    target_pos_b = command[:, :3]
+    target_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, target_pos_b
+    )
+    object_pos_w = object.data.root_pos_w
+    d_obj_target = torch.norm(object_pos_w - target_pos_w, dim=1)
+
+    return torch.where(
         is_lifted,
-        torch.ones_like(height_error),  # Max reward if lifted
-        1 - torch.tanh(height_error / std)  # Progressive lifting reward
+        1 - torch.tanh(d_obj_target / std),
+        torch.zeros_like(d_obj_target),
     )
 
-    # STAGE 3: Transport (XY Plane)
-    # This reward is ONLY active (or heavily weighted) if the object is lifted.
-    # Otherwise, if we reward this while on ground, the robot will drag it.
-    transport_reward = 1 - torch.tanh(d_obj_target_xy / std)
-    rew_transport = transport_reward * is_lifted
 
-    # STAGE 4: Placing (Z Axis)
-    # Only reward Z-axis placement when object is positioned above target XY
-    # Use soft gating to allow gradual transition from transport to placement
-    rew_place = 1 - torch.tanh(d_obj_target_z / std)
-    
-    # Gradual activation of placement reward based on XY proximity
-    
-    # Allow placement when lifted OR when very close to target (hysteresis)
-    can_place = is_lifted & is_above_target
-    
-    rew_place_final = torch.where(
-        can_place,
-        rew_place,  # Focus on Z placement if above target
-        torch.zeros_like(rew_place)
+def reward_stage_place(
+    env: ManagerBasedRLEnv,
+    distance_threshold: float = 0.03,  # within 3 cm to target
+    command_name: str = "drop_pose",
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """Stage 4: Reward for lowering and releasing. Only active if above target."""
+    robot: RigidObject = env.scene[robot_cfg.name]
+    object: RigidObject = env.scene[object_cfg.name]
+    command = env.command_manager.get_command(command_name)
+
+    target_pos_b = command[:, :3]
+    target_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, target_pos_b
     )
+    object_pos_w = object.data.root_pos_w
 
-    # -----------------------------------------------------------------------
-    # 6. Composition
-    # -----------------------------------------------------------------------
-    
-    # Balanced weights to create smooth learning progression:
-    # - Reach: Foundation skill, always active
-    # - Lift: Critical transition, moderate weight
-    # - Transport: Equal importance to lifting
-    # - Place: Highest reward for task completion
-    
-    total_reward = (
-        1.0 * rew_reach +      # Base reaching skill
-        1.5 * rew_lift +       # Lifting encouragement
-        1.5 * rew_transport +  # Transport when lifted
-        2.0 * rew_place_final  # Completion bonus
-    )
+    # 1. Check if distance to target XY is within threshold
+    d_obj_target = torch.norm(object_pos_w - target_pos_w, dim=1)
+    can_drop = (d_obj_target < distance_threshold).float()
 
-    # Clamp reward to prevent numerical instability
-    total_reward = torch.clamp(total_reward, min=0, max=10.0)
+    # 2. Gripper Release Reward
+    gripper_joints = robot.data.joint_pos[:, -2:]
+    gripper_norm = torch.clamp(torch.mean(gripper_joints, dim=1) / 0.04, 0.0, 1.0)
 
-    return total_reward
+    return gripper_norm * can_drop

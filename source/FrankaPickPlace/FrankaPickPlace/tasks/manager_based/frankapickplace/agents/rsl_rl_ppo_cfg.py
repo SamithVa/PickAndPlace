@@ -12,9 +12,10 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 class FrankaReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 1500
-    save_interval = 50
+    save_interval = 200
     experiment_name = "franka_pick_place"
     run_name = ""
+    # clip_actions = 10.0
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,
@@ -30,7 +31,7 @@ class FrankaReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         entropy_coef=0.006,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=1.0e-4,
+        learning_rate=1e-4,
         schedule="adaptive",
         gamma=0.98,
         lam=0.95,

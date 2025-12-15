@@ -71,4 +71,7 @@ LIFT/
 # Docker history
 .isaac-lab-docker-history
 
+# Ignore vscode settings
+.vscode/settings.json
+
 

@@ -3,9 +3,12 @@
 from isaacsim import SimulationApp
 import numpy as np
 # 启动Isaac Sim
-simulation_app = SimulationApp({"headless": True})
+simulation_app = SimulationApp({
+    "headless": True,  # Set to False to see the GUI
+})
 
 from isaacsim.core.api import World
+
 my_world = World(stage_units_in_meters=1.0)
 my_world.scene.add_default_ground_plane()
 
@@ -36,7 +39,7 @@ my_controller = ArmPickController(
     articulation=my_franka,
     picking_order_cube_names=my_task.get_cube_names(),  # 获取所有方块的名称，定义抓取顺序
     robot_observation_name=robot_name,
-    policy_path="./logs/rsl_rl/franka_pick_place/2025-11-18_18-04-11_lift_to_air/exported/policy.pt"
+    policy_path="../../logs/rsl_rl/franka_pick_place/2025-11-18_18-04-11_lift_to_air/exported/policy.pt"
 )
 
 # 获取机械臂的关节控制器，用于后续将控制器输出的动作应用到机器人
@@ -61,8 +64,12 @@ while simulation_app.is_running():
         # Get observations and apply controller actions
         observations = my_task.get_observations()
         actions = my_controller.forward(observations=observations) # 根据观测数据计算动作指令
-        my_task.last_action = actions  # NOTE: 保存最后的动作指令到任务中，供观测使用
-        articulation_controller.apply_action(actions) #将动作指令应用到机器人仿真中
+        # print(actions)
+        # Extract and save the 8-dim action (before converting to 9-dim for articulation)
+        if actions.joint_velocities is not None:
+            action_array = actions.joint_velocities[:7].tolist() + [actions.joint_velocities[7]]  # 7 arm + 1 gripper
+            my_task.last_action = np.array(action_array)  # 8-dim array
+        articulation_controller.apply_action(actions) #将动作指令应用到机器人仿真中 
         
         step_count += 1
         # 每100步打印一次指标

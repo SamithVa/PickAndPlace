@@ -24,11 +24,11 @@ from isaaclab_assets import FRANKA_PANDA_CFG  # isort: skip
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
-from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
-
 from . import mdp
+
+
 ##
 # Scene definition
 ##
@@ -125,15 +125,19 @@ class FrankaSceneCfg(InteractiveSceneCfg):
 
     # Listens to the required transforms, adding visualization markers to end-effector frame
     ee_frame = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/panda_link0", # root of robot (base_link)
+        prim_path="{ENV_REGEX_NS}/Robot/panda_link0",  # root of robot (base_link)
         debug_vis=False,
         visualizer_cfg=FRAME_MARKER_CFG.copy().replace(
-            markers={"frame": FRAME_MARKER_CFG.markers["frame"].replace(scale=(0.1, 0.1, 0.1))},
-            prim_path="/Visuals/FrameTransformer"
+            markers={
+                "frame": FRAME_MARKER_CFG.markers["frame"].replace(
+                    scale=(0.1, 0.1, 0.1)
+                )
+            },
+            prim_path="/Visuals/FrameTransformer",
         ),
         target_frames=[
             FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/panda_hand", # end-effector link
+                prim_path="{ENV_REGEX_NS}/Robot/panda_hand",  # end-effector link
                 name="end_effector",
                 offset=OffsetCfg(
                     pos=[0.0, 0.0, 0.1034],
@@ -141,7 +145,6 @@ class FrankaSceneCfg(InteractiveSceneCfg):
             ),
         ],
     )
-
 
     # lights
     light = AssetBaseCfg(
@@ -158,20 +161,20 @@ class FrankaSceneCfg(InteractiveSceneCfg):
 @configclass
 class CommandsCfg:
     """Command terms for the MDP."""
-    
-    ### Added for pick and place task ###
+
+    # Place location (where to drop the cube)
     drop_pose = mdp.UniformPoseCommandCfg(
         asset_name="robot",
-        body_name="panda_hand",  # will be set by agent env cfg
-        resampling_time_range=(5.0, 5.0),  # Match episode_length_s
+        body_name="panda_hand",
+        resampling_time_range=(8.0, 8.0),
         debug_vis=True,
         ranges=mdp.UniformPoseCommandCfg.Ranges(
-            pos_x=(0.3, 0.6),      
-            pos_y=(-0.4, 0.4),
-            pos_z=(0.2, 0.2),  
-            roll=(0.0, 0.0), 
-            pitch=(0.0, 0.0), 
-            yaw=(0.0, 0.0)
+            pos_x=(0.4, 0.6),  # Where to place
+            pos_y=(-0.25, 0.25),
+            pos_z=(0.25, 0.5),  # Placement height
+            roll=(0.0, 0.0),
+            pitch=(0.0, 0.0),
+            yaw=(0.0, 0.0),
         ),
     )
 
@@ -181,13 +184,16 @@ class ActionsCfg:
     """Action specifications for the MDP."""
 
     arm_action: ActionTerm = mdp.JointPositionActionCfg(
-            asset_name="robot", joint_names=["panda_joint.*"], scale=0.5, use_default_offset=True
+        asset_name="robot",
+        joint_names=["panda_joint.*"],
+        scale=0.5,
+        use_default_offset=True,
     )
     gripper_action: ActionTerm = mdp.BinaryJointPositionActionCfg(
-            asset_name="robot",
-            joint_names=["panda_finger.*"],
-            open_command_expr={"panda_finger_.*": 0.04},
-            close_command_expr={"panda_finger_.*": 0.0},
+        asset_name="robot",
+        joint_names=["panda_finger.*"],
+        open_command_expr={"panda_finger_.*": 0.04},
+        close_command_expr={"panda_finger_.*": 0.0},
     )
 
 
@@ -254,8 +260,8 @@ class RewardsCfg:
         weight=15.0
     )
 
-    # PHASE 2: MOVING TO TARGET
-    object_goal_tracking = RewTerm(
+    # Stage 4: Transport (multi-scale for better gradients)
+    object_goal_tracking_coarse = RewTerm(
         func=mdp.object_goal_distance,
         params={
             "std": 0.3, 
@@ -267,8 +273,7 @@ class RewardsCfg:
         weight=16.0,
     )
 
-    # When close to the goal, provide a finer-grained reward to encourage precise placement
-    object_goal_tracking_fine_grained = RewTerm(
+    object_goal_tracking_fine = RewTerm(
         func=mdp.object_goal_distance,
         params={
             "std": 0.05, 
@@ -293,13 +298,12 @@ class RewardsCfg:
     )
     
     # --- PENALTIES --- #
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-5e-5)
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-4)
     joint_vel = RewTerm(
         func=mdp.joint_vel_l2,
-        weight=-5e-5,
+        weight=-1e-4,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
-
 
 
 @configclass
@@ -323,12 +327,26 @@ class TerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
+    # Gradually increase placement and release rewards as training progresses
+    placement_weight = CurrTerm(
+        func=mdp.modify_reward_weight,
+        params={"term_name": "placement_reward", "weight": 30.0, "num_steps": 15000},
+    )
+
+    release_weight = CurrTerm(
+        func=mdp.modify_reward_weight,
+        params={"term_name": "release_reward", "weight": 40.0, "num_steps": 25000},
+    )
+
+    # Gradually increase action penalties to encourage smooth motion
     action_rate = CurrTerm(
-        func=mdp.modify_reward_weight, params={"term_name": "action_rate", "weight": -1e-3, "num_steps": 100000}
+        func=mdp.modify_reward_weight,
+        params={"term_name": "action_rate", "weight": -1e-2, "num_steps": 20000},
     )
 
     joint_vel = CurrTerm(
-        func=mdp.modify_reward_weight, params={"term_name": "joint_vel", "weight": -1e-3, "num_steps": 100000}
+        func=mdp.modify_reward_weight,
+        params={"term_name": "joint_vel", "weight": -1e-2, "num_steps": 20000},
     )
 
 
@@ -356,16 +374,17 @@ class FrankPickPlaceEnvCfg(ManagerBasedRLEnvCfg):
         # general settings
         self.decimation = 2
         self.sim.render_interval = self.decimation
-        self.episode_length_s = 5.0  # Increased from 5.0 to allow time for pick and place
+        self.episode_length_s = (
+            5.0  # Increased from 5.0 to allow time for pick and place
+        )
         # simulation settings
         self.sim.dt = 0.01
-        self.sim.physx.bounce_threshold_velocity = 0.2
         self.sim.physx.bounce_threshold_velocity = 0.01
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
 
-        
+
 @configclass
 class FrankPickPlaceCfgEnvCfg_PLAY(FrankPickPlaceEnvCfg):
     def __post_init__(self):
