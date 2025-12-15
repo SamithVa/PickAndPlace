@@ -21,28 +21,76 @@ def object_ee_distance(
     std: float,
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    use_target_cube: bool = False,
+    num_cubes: int = 4,
 ) -> torch.Tensor:
-    """Reward the agent for reaching the object using tanh-kernel."""
-    # extract the used quantities (to enable type-hinting)
-    object: RigidObject = env.scene[object_cfg.name]
+    """Reward the agent for reaching the object using tanh-kernel.
+    
+    Args:
+        use_target_cube: If True, use the target cube from env.target_cube_idx.
+                        If False, use the object_cfg (backward compatible).
+    """
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
-    # Target object position: (num_envs, 3), absolute world position
-    cube_pos_w = object.data.root_pos_w
-    # End-effector position: (num_envs, 3), absolute world position
-    ee_w = ee_frame.data.target_pos_w[..., 0, :]
-    # Distance of the end-effector to the object: (num_envs,)
+    ee_w = ee_frame.data.target_pos_w[..., 0, :]  # (num_envs, 3)
+    
+    if use_target_cube:
+        # Get target cube position based on env.target_cube_idx
+        if not hasattr(env, 'target_cube_idx'):
+            env.target_cube_idx = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        
+        target_idx = env.target_cube_idx
+        cube_positions_w = []
+        for i in range(num_cubes):
+            cube_name = f"cube_{i}"
+            if cube_name in env.scene.keys():
+                cube: RigidObject = env.scene[cube_name]
+                cube_positions_w.append(cube.data.root_pos_w[:, :3].unsqueeze(1))
+        
+        all_cubes_w = torch.cat(cube_positions_w, dim=1)  # (num_envs, num_cubes, 3)
+        cube_pos_w = all_cubes_w[torch.arange(env.num_envs, device=env.device), target_idx]
+    else:
+        # Original behavior
+        object: RigidObject = env.scene[object_cfg.name]
+        cube_pos_w = object.data.root_pos_w[:, :3]
+    
+    # Distance of the end-effector to the object
     object_ee_distance = torch.norm(cube_pos_w - ee_w, dim=1)
-
     return 1 - torch.tanh(object_ee_distance / std)
 
 def object_is_lifted(
     env: ManagerBasedRLEnv, 
     minimal_height: float, 
-    object_cfg: SceneEntityCfg = SceneEntityCfg("object")
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    use_target_cube: bool = False,
+    num_cubes: int = 4,
 ) -> torch.Tensor:
-    """Reward the agent for lifting the object above the minimal height."""
-    object: RigidObject = env.scene[object_cfg.name]
-    return torch.where(object.data.root_pos_w[:, 2] > minimal_height, 1.0, 0.0)
+    """Reward the agent for lifting the object above the minimal height.
+    
+    Args:
+        use_target_cube: If True, use the target cube from env.target_cube_idx.
+                        If False, use the object_cfg (backward compatible).
+    """
+    if use_target_cube:
+        # Get target cube position based on env.target_cube_idx
+        if not hasattr(env, 'target_cube_idx'):
+            env.target_cube_idx = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        
+        target_idx = env.target_cube_idx
+        cube_positions_w = []
+        for i in range(num_cubes):
+            cube_name = f"cube_{i}"
+            if cube_name in env.scene.keys():
+                cube: RigidObject = env.scene[cube_name]
+                cube_positions_w.append(cube.data.root_pos_w[:, :3].unsqueeze(1))
+        
+        all_cubes_w = torch.cat(cube_positions_w, dim=1)  # (num_envs, num_cubes, 3)
+        cube_pos_w = all_cubes_w[torch.arange(env.num_envs, device=env.device), target_idx]
+        cube_height = cube_pos_w[:, 2]
+    else:
+        object: RigidObject = env.scene[object_cfg.name]
+        cube_height = object.data.root_pos_w[:, 2]
+    
+    return torch.where(cube_height > minimal_height, 1.0, 0.0)
 
 def object_goal_distance(
     env: ManagerBasedRLEnv,
@@ -51,28 +99,50 @@ def object_goal_distance(
     minimal_height: float = None,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    use_target_cube: bool = False,
+    num_cubes: int = 4,
 ) -> torch.Tensor:
     """Reward the agent for tracking the goal pose using tanh-kernel.
     
     Args:
         minimal_height: If provided, only reward when object is above this height.
                        If None, reward movement to goal without lifting requirement.
+        use_target_cube: If True, use the target cube from env.target_cube_idx.
+                        If False, use the object_cfg (backward compatible).
     """
     robot: RigidObject = env.scene[robot_cfg.name]
-    object: RigidObject = env.scene[object_cfg.name]
     command = env.command_manager.get_command(command_name)
     
     # Compute target position in world frame
     target_pos_b = command[:, :3]
     target_pos_w, _ = combine_frame_transforms(robot.data.root_pos_w, robot.data.root_quat_w, target_pos_b)
     
+    if use_target_cube:
+        # Get target cube position based on env.target_cube_idx
+        if not hasattr(env, 'target_cube_idx'):
+            env.target_cube_idx = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        
+        target_idx = env.target_cube_idx
+        cube_positions_w = []
+        for i in range(num_cubes):
+            cube_name = f"cube_{i}"
+            if cube_name in env.scene.keys():
+                cube: RigidObject = env.scene[cube_name]
+                cube_positions_w.append(cube.data.root_pos_w[:, :3].unsqueeze(1))
+        
+        all_cubes_w = torch.cat(cube_positions_w, dim=1)  # (num_envs, num_cubes, 3)
+        object_pos_w = all_cubes_w[torch.arange(env.num_envs, device=env.device), target_idx]
+    else:
+        object: RigidObject = env.scene[object_cfg.name]
+        object_pos_w = object.data.root_pos_w[:, :3]
+    
     # Distance of object to goal
-    distance = torch.norm(target_pos_w - object.data.root_pos_w, dim=1)
+    distance = torch.norm(target_pos_w - object_pos_w, dim=1)
     reward = 1 - torch.tanh(distance / std)
     
     # Apply lifting constraint if specified
     if minimal_height is not None:
-        reward = (object.data.root_pos_w[:, 2] > minimal_height) * reward
+        reward = (object_pos_w[:, 2] > minimal_height) * reward
     
     return reward
 
@@ -174,14 +244,19 @@ def staged_pick_and_place_reward(
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    use_target_cube: bool = False,
+    num_cubes: int = 4,
 ) -> torch.Tensor:
     """
     A staged reward that guides the agent through Reach -> Lift -> Move -> Place.
     The later stages are only rewarded if the previous stages are satisfied.
+    
+    Args:
+        use_target_cube: If True, use the target cube from env.target_cube_idx.
+                        If False, use the object_cfg (backward compatible).
     """
     # 1. Get Assets
     robot: RigidObject = env.scene[robot_cfg.name]
-    object: RigidObject = env.scene[object_cfg.name]
     ee_frame = env.scene[ee_frame_cfg.name]
     command = env.command_manager.get_command(command_name)
 
@@ -190,8 +265,25 @@ def staged_pick_and_place_reward(
     target_pos_b = command[:, :3]
     target_pos_w, _ = combine_frame_transforms(robot.data.root_pos_w, robot.data.root_quat_w, target_pos_b)
     
-    # Object and EE positions
-    object_pos_w = object.data.root_pos_w
+    # Get object position (either specific object or target cube)
+    if use_target_cube:
+        if not hasattr(env, 'target_cube_idx'):
+            env.target_cube_idx = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        
+        target_idx = env.target_cube_idx
+        cube_positions_w = []
+        for i in range(num_cubes):
+            cube_name = f"cube_{i}"
+            if cube_name in env.scene.keys():
+                cube: RigidObject = env.scene[cube_name]
+                cube_positions_w.append(cube.data.root_pos_w[:, :3].unsqueeze(1))
+        
+        all_cubes_w = torch.cat(cube_positions_w, dim=1)  # (num_envs, num_cubes, 3)
+        object_pos_w = all_cubes_w[torch.arange(env.num_envs, device=env.device), target_idx]
+    else:
+        object: RigidObject = env.scene[object_cfg.name]
+        object_pos_w = object.data.root_pos_w[:, :3]
+    
     ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]
 
     # 3. Calculate Distances
@@ -202,7 +294,6 @@ def staged_pick_and_place_reward(
     d_obj_target_xy = torch.norm(object_pos_w[:, :2] - target_pos_w[:, :2], dim=1)
     
     # Distance: Object to Target (Z axis / Height)
-    # We assume target Z is likely 0 or close to ground for placement
     d_obj_target_z = torch.abs(object_pos_w[:, 2] - target_pos_w[:, 2])
 
     # 4. Define Criteria (The "Levels")

@@ -18,6 +18,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+import numpy as np
 
 from isaaclab_assets import FRANKA_PANDA_CFG  # isort: skip
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
@@ -33,6 +34,69 @@ from . import mdp
 ##
 
 
+def create_cube_configs(num_cubes: int, x_range: tuple = (0.2, 0.6), y_range: tuple = (-0.3, 0.3),
+                        z_pos: float = 0.055, cube_size: float = 0.05):
+    """Create multiple cube configurations with random positions.
+
+    Args:
+        num_cubes: Number of cubes to create
+        x_range: Range for x positions (min, max)
+        y_range: Range for y positions (min, max)
+        z_pos: Fixed z position for all cubes
+        cube_size: Size of each cube
+
+    Returns:
+        Dictionary of cube configurations
+    """
+    cube_configs = {}
+
+    # Generate random positions
+    np.random.seed(42)  # For reproducibility
+    x_positions = np.random.uniform(x_range[0], x_range[1], num_cubes)
+    y_positions = np.random.uniform(y_range[0], y_range[1], num_cubes)
+
+    # Color variations for cubes
+    colors = [
+        (1.0, 0.0, 0.0),  # Red
+        (0.0, 1.0, 0.0),  # Green
+        (0.0, 0.0, 1.0),  # Blue
+        (1.0, 1.0, 0.0),  # Yellow
+        (1.0, 0.0, 1.0),  # Magenta
+        (0.0, 1.0, 1.0),  # Cyan
+        (1.0, 0.5, 0.0),  # Orange
+        (0.5, 0.0, 1.0),  # Purple
+    ]
+
+    for i in range(num_cubes):
+        cube_configs[f'cube_{i}'] = RigidObjectCfg(
+            prim_path=f"{{ENV_REGEX_NS}}/Cube_{i}",
+            init_state=RigidObjectCfg.InitialStateCfg(
+                pos=[x_positions[i], y_positions[i], z_pos],
+                rot=[1, 0, 0, 0]
+            ),
+            spawn=sim_utils.CuboidCfg(
+                size=[cube_size, cube_size, cube_size],
+                semantic_tags=[('color', f'color_{i}')],
+                rigid_props=RigidBodyPropertiesCfg(
+                    solver_position_iteration_count=16,
+                    solver_velocity_iteration_count=1,
+                    max_angular_velocity=1000.0,
+                    max_linear_velocity=1000.0,
+                    max_depenetration_velocity=5.0,
+                    disable_gravity=False,
+                ),
+                visual_material=sim_utils.PreviewSurfaceCfg(
+                    diffuse_color=colors[i % len(colors)],
+                    metallic=0.2
+                ),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0)
+            ),
+        )
+
+    return cube_configs
+
+
 @configclass
 class FrankaSceneCfg(InteractiveSceneCfg):
     """Configuration for the scene with a robotic arm."""
@@ -46,26 +110,18 @@ class FrankaSceneCfg(InteractiveSceneCfg):
     # robots
     robot: ArticulationCfg = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-    # objects
-    object = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Cube",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.055], rot=[1, 0, 0, 0]),
-            spawn=sim_utils.CuboidCfg(
-                size=[0.05, 0.05, 0.05],
-                semantic_tags=[('color', 'red')],
-                rigid_props=RigidBodyPropertiesCfg(
-                    solver_position_iteration_count=16,
-                    solver_velocity_iteration_count=1,
-                    max_angular_velocity=1000.0,
-                    max_linear_velocity=1000.0,
-                    max_depenetration_velocity=5.0,
-                    disable_gravity=False, 
-                ),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
-                collision_props=sim_utils.CollisionPropertiesCfg(),
-                physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0)
-            ),
-        )
+    # objects - multiple cubes with random positions
+    def __post_init__(self):
+        """Initialize multiple cubes with random positions."""
+        # Create 4 cubes with random positions
+        cube_configs = create_cube_configs(num_cubes=4)
+
+        # Add each cube to the scene configuration
+        for cube_name, cube_cfg in cube_configs.items():
+            setattr(self, cube_name, cube_cfg)
+
+        # Keep the first cube as 'object' for compatibility with existing code
+        self.object = cube_configs['cube_0']
 
     # Listens to the required transforms, adding visualization markers to end-effector frame
     ee_frame = FrameTransformerCfg(
@@ -145,7 +201,13 @@ class ObservationsCfg:
 
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
-        object_position = ObsTerm(func=mdp.object_position_in_robot_root_frame)
+        
+        # Option 1: Observe all cubes (recommended for learning which cube to pick)
+        all_cubes_positions = ObsTerm(func=mdp.all_cubes_positions_in_robot_root_frame, params={"num_cubes": 4})
+        
+        # Option 2: Only observe the target cube (if you want to pre-select target externally)
+        # target_cube_position = ObsTerm(func=mdp.target_cube_position_in_robot_root_frame)
+        
         ### Added for pick and place task
         target_drop_position = ObsTerm(func=mdp.generated_commands, params={"command_name": "drop_pose"}) 
         actions = ObsTerm(func=mdp.last_action)
@@ -164,13 +226,14 @@ class EventCfg:
 
     reset_all = EventTerm(func=mdp.reset_scene_to_default, mode="reset")
 
-    reset_object_position = EventTerm(
-        func=mdp.reset_root_state_uniform,
+    # Reset all cubes to random positions and select target cube
+    reset_all_cubes = EventTerm(
+        func=mdp.reset_all_cubes_to_random_positions,
         mode="reset",
         params={
-            "pose_range": {"x": (0.1, 0.25), "y": (-0.1, 0.1), "z": (0.0, 0.0)},
-            "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object", body_names="Cube"),
+            "num_cubes": 4,
+            "pose_range": {"x": (0.2, 0.6), "y": (-0.3, 0.3), "z": (0.055, 0.055)},
+            "selection_mode": "closest",  # Options: "closest", "random", "sequential"
         },
     )
 
@@ -179,41 +242,56 @@ class EventCfg:
 class RewardsCfg:
     """Reward terms for the MDP."""
 
-    # PHASE 1: PICKING
-    reaching_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.1}, weight=1.0)
-    lifting_object = RewTerm(func=mdp.object_is_lifted, params={"minimal_height": 0.04}, weight=15.0)
+    # PHASE 1: PICKING (using target cube)
+    reaching_object = RewTerm(
+        func=mdp.object_ee_distance, 
+        params={"std": 0.1, "use_target_cube": True, "num_cubes": 4}, 
+        weight=1.0
+    )
+    lifting_object = RewTerm(
+        func=mdp.object_is_lifted, 
+        params={"minimal_height": 0.04, "use_target_cube": True, "num_cubes": 4}, 
+        weight=15.0
+    )
 
     # PHASE 2: MOVING TO TARGET
     object_goal_tracking = RewTerm(
         func=mdp.object_goal_distance,
-        params={"std": 0.3, "minimal_height": 0.2, "command_name": "drop_pose"},
+        params={
+            "std": 0.3, 
+            "minimal_height": 0.2, 
+            "command_name": "drop_pose",
+            "use_target_cube": True,
+            "num_cubes": 4
+        },
         weight=16.0,
     )
 
     # When close to the goal, provide a finer-grained reward to encourage precise placement
     object_goal_tracking_fine_grained = RewTerm(
         func=mdp.object_goal_distance,
-        params={"std": 0.05, "minimal_height": 0.2, "command_name": "drop_pose"},
+        params={
+            "std": 0.05, 
+            "minimal_height": 0.2, 
+            "command_name": "drop_pose",
+            "use_target_cube": True,
+            "num_cubes": 4
+        },
         weight=5.0,
     )
+
+    # PHASE 3: SUCCESS BONUS - Reward for successfully placing cube at goal
+    object_placement_success = RewTerm(
+        func=mdp.object_reached_goal,
+        params={
+            "command_name": "drop_pose",
+            "threshold": 0.02,
+            "use_target_cube": True,
+            "num_cubes": 4
+        },
+        weight=50.0,  # Large bonus for successful placement
+    )
     
-    # PHASE 3: PLACING
-    # gentle_placing = RewTerm(
-    #     func=mdp.placing_object_gentle,
-    #     params={"command_name": "drop_pose", "target_height": 0.05},
-    #     weight=30.0,
-    # )
-
-    # COMBINED PICK AND PLACE REWARD
-    # picking_and_placing = RewTerm(
-    #     func=mdp.staged_pick_and_place_reward,
-    #     params={
-    #         "std": 0.25,
-    #         "command_name": "drop_pose"
-    #     },
-    #     weight=1e-1,
-    # )
-
     # --- PENALTIES --- #
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-5e-5)
     joint_vel = RewTerm(
@@ -230,7 +308,15 @@ class TerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
-    object_reaching_goal = DoneTerm(func=mdp.object_reached_goal, params={"command_name": "drop_pose"})
+    object_reaching_goal = DoneTerm(
+        func=mdp.object_reached_goal, 
+        params={
+            "command_name": "drop_pose",
+            "threshold": 0.02,
+            "use_target_cube": True,
+            "num_cubes": 4
+        }
+    )
 
 
 @configclass
